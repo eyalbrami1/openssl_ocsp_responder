@@ -8,7 +8,7 @@ setup(
   author = 'Eyal Brami',
   author_email = 'eyal.brami@redis.com',
   url = 'https://github.com/eyalbrami1/openssl_ocsp_responder',
-  download_url = 'https://github.com/eyalbrami1/openssl_ocsp_responder/archive/refs/tags/v0.1.tar.gz',
+  download_url = 'https://github.com/eyalbrami1/openssl_ocsp_responder/archive/refs/tags/v0.2.tar.gz',
   keywords = ['ocsp', 'ssl', 'openssl'],
   install_requires=[            # I get to this in a second
           'validators',
