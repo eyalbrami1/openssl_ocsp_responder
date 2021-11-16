@@ -2,7 +2,7 @@ from distutils.core import setup
 setup(
   name = 'openssl_ocsp_responder',
   packages = ['openssl_ocsp_responder'],
-  version = '0.1',
+  version = '0.2',
   license='MIT',
   description = 'Simple wrapper for OpenSSL OCSP server',
   author = 'Eyal Brami',
