@@ -68,7 +68,6 @@ class OCSPResponder(object):
                 '-CA', self.ca_certificate_path]
         if self.log_path is not None:
             args += ['-text', '-out', self.log_path]
-        print(args)
 
         self.responder_process = subprocess.Popen(args=args,
                                                   stdout=subprocess.PIPE,
@@ -94,12 +93,6 @@ class OCSPResponder(object):
         """
         with open(self.crl_file_path, 'w') as crl_file:
             for cert in self.crl.values():
-                print("{}\t{}\t{}\t{}\t{}\t{}\n".format(cert['status'],
-                                                                      cert['expiration_time'],
-                                                                      cert['revocation_time'],
-                                                                      cert['serial_number'],
-                                                                      'unknown',
-                                                                      cert['subject']))
                 crl_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(cert['status'],
                                                                       cert['expiration_time'],
                                                                       cert['revocation_time'],
