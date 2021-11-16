@@ -3,6 +3,9 @@ import os.path
 import subprocess
 import OpenSSL.crypto
 
+CRL_FILE_NAME = "db.crl"
+ATTRIBUTE_FILE_SUFFIX = ".attr"
+
 
 class OCSPResponderException(Exception):
     pass
@@ -11,19 +14,22 @@ class OCSPResponderException(Exception):
 class OCSPResponder(object):
     """
     This object wraps OpenSSL's basic OCSP responder, and supplies an API to control it
+    Please make sure that the OCSP key and certificate match, and that the certificate is issued and signed
+    by the CA that the responder is supposed to approve certificates for.
+    The responder will only be able to approve certificates issued by the CA
     """
     def __init__(self, crl_dir, ca_certificate_path, ocsp_certificate_path,
                  ocsp_key_path, start_responder=False, port='9999', log_output_path=None):
         """
         Initializes the responder
-        Args:
-            crl_dir (str, optional): The path to the directory to write the CRL file in.
-            ca_certificate_path (str): Path to the CA certificate file corresponding to the revocation info
-            ocsp_certificate_path (str): Path to the OCSP Responder's certificate file
-            ocsp_key_path (str): Path to the OCSP Responder's private key file
-            start_responder (bool, optional): Should the responder start upon initialization
-            port (int, optional): Port the responder should listen to
-            log_output_path (str, optional): absolute path to an output file for the responder
+        :param str crl_dir: The path to the directory to write the CRL file in.
+        :param str ca_certificate_path: Path to the certificate PEM file for the CA that issued the certificates the
+         responder has to approve
+        :param str ocsp_certificate_path: Path to the OCSP Responder's certificate PEM file
+        :param str ocsp_key_path: Path to the OCSP Responder's private key file
+        :param bool start_responder: Should the responder start upon initialization
+        :param str port: Port the responder should listen to
+        :param str log_output_path: absolute path to an output file for the responder
         """
         if any(arg is None for arg in [ca_certificate_path, ocsp_certificate_path, ocsp_key_path]):
             raise OCSPResponderException("All certificates must be supplied")
@@ -33,10 +39,16 @@ class OCSPResponder(object):
         self.crl_dir = crl_dir
         self.responder_process = None
         self.ocsp_port = port
-        self.crl_file_path = os.path.join(crl_dir, "db.crl")
-        self.crl_file = None
+        self.crl_file_path = os.path.join(crl_dir, CRL_FILE_NAME)
         self.crl = {}
         self.log_path = log_output_path
+
+    def __del__(self):
+        self.stop_responder()
+        if os.path.exists(self.crl_file_path):
+            os.remove(self.crl_file_path)
+        if os.path.exists(self.crl_file_path + ATTRIBUTE_FILE_SUFFIX):
+            os.remove(self.crl_file_path + ATTRIBUTE_FILE_SUFFIX)
 
     def start_responder(self):
         """
@@ -44,6 +56,9 @@ class OCSPResponder(object):
         Syntax of shell command:
         openssl ocsp -index <CRL file> -port <port> -rsigner <responder certificate file> -rkey <responder private key file> -CA <ca certificate file>
         """
+        if self.responder_process is not None and self.is_alive():
+            raise OCSPResponderException("Responder already running")
+
         self.write_crl()
         args = ['openssl', 'ocsp',
                 '-index', self.crl_file_path,
@@ -52,9 +67,9 @@ class OCSPResponder(object):
                 '-rkey', self.ocsp_key_path,
                 '-CA', self.ca_certificate_path]
         if self.log_path is not None:
-            args.append('-text')
-            args.append('-out')
-            args.append(self.log_path)
+            args += ['-text', '-out', self.log_path]
+        print(args)
+
         self.responder_process = subprocess.Popen(args=args,
                                                   stdout=subprocess.DEVNULL,
                                                   stderr=subprocess.STDOUT)
@@ -67,7 +82,7 @@ class OCSPResponder(object):
             self.responder_process.terminate()
             self.responder_process.wait()
 
-    def update(self):
+    def restart(self):
         self.stop_responder()
         self.start_responder()
 
@@ -75,34 +90,41 @@ class OCSPResponder(object):
         """
         Creates the CRL file for the OpenSSL OCSP Responder
         """
-        self.crl_file = open(self.crl_file_path, 'w')
-        for cert in self.crl.values():
-            self.crl_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(cert['status'],
-                                                                  cert['expiration'],
-                                                                  cert['revocation'],
-                                                                  cert['serial_number'],
-                                                                  'unknown',
-                                                                  cert['subject']))
-        self.crl_file.close()
+        with open(self.crl_file_path, 'w') as crl_file:
+            for cert in self.crl.values():
+                print("{}\t{}\t{}\t{}\t{}\t{}\n".format(cert['status'],
+                                                                      cert['expiration_time'],
+                                                                      cert['revocation_time'],
+                                                                      cert['serial_number'],
+                                                                      'unknown',
+                                                                      cert['subject']))
+                crl_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(cert['status'],
+                                                                      cert['expiration_time'],
+                                                                      cert['revocation_time'],
+                                                                      cert['serial_number'],
+                                                                      'unknown',
+                                                                      cert['subject']))
 
-        attribute_file_path = os.path.join(self.crl_file_path, ".attr")
-        attribute_file = open(self.crl_file_path + ".attr", 'w')
-        attribute_file.write("unique_subject = no")
-        attribute_file.close()
+        with open(self.crl_file_path + ATTRIBUTE_FILE_SUFFIX, 'w') as attribute_file:
+            attribute_file.write("unique_subject = no")
 
     def _add_certificate(self, certificate_path):
         """
         Parses a certificate file to an internal entry in the CRL
-        :param certificate_path: path to the certificate file
+        :param str certificate_path: path to the certificate file
+        :return: The certificate's serial number (used as a key for CRL entries)
+        :rtype: int
         """
-        certificate_str = open(certificate_path, 'rt').read()
+        with open(certificate_path, 'rt') as certificate_file:
+            certificate_str = certificate_file.read()
+
         certificate = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, certificate_str)
         serial_number = certificate.get_serial_number()
         subject = certificate.get_subject()
         subject_str = "".join("/{}={}".format(name.decode(), value.decode()) for name, value in subject.get_components())
         cert_entry = {'serial_number': format(serial_number, 'x'),
-                      'expiration': certificate.get_notAfter().decode("utf-8")[2:],
-                      'revocation': '',
+                      'expiration_time': certificate.get_notAfter().decode("utf-8")[2:],
+                      'revocation_time': '',
                       'subject': subject_str}
 
         self.crl[serial_number] = cert_entry
@@ -111,7 +133,7 @@ class OCSPResponder(object):
     def set_verified_certificate(self, certificate_path):
         """
         Adds a certificate to the CRL as "Verified"
-        :param certificate_path: path to a PEM certificate file
+        :param str certificate_path: path to a PEM certificate file
         """
         serial_number = self._add_certificate(certificate_path)
         self.crl[serial_number]['status'] = 'V'
@@ -119,8 +141,9 @@ class OCSPResponder(object):
     def set_revoked_certificate(self, certificate_path, revocation_time=None):
         """
         Adds a certificate to the CRL as "Revoked"
-        :param certificate_path: path to a PEM certificate file
+        :param str certificate_path: path to a PEM certificate file
         :param revocation_time: timestamp of the revocation of the certificate (datetime object)
+        :type revocation_time: datetime or None for the current time
         """
         serial_number = self._add_certificate(certificate_path)
         self.crl[serial_number]['status'] = 'R'
@@ -128,7 +151,7 @@ class OCSPResponder(object):
         if revocation_time is None:
             revocation_time = datetime.datetime.utcnow()
         revocation_time_str = revocation_time.strftime("%y%m%d%H%M%S") + "Z"
-        self.crl[serial_number]['revocation'] = revocation_time_str
+        self.crl[serial_number]['revocation_time'] = revocation_time_str
 
     def delete_certificate(self, certificate_path):
         """
