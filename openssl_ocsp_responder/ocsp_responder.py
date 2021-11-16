@@ -56,7 +56,7 @@ class OCSPResponder(object):
         Syntax of shell command:
         openssl ocsp -index <CRL file> -port <port> -rsigner <responder certificate file> -rkey <responder private key file> -CA <ca certificate file>
         """
-        if self.responder_process is not None and self.is_alive():
+        if self.is_alive():
             raise OCSPResponderException("Responder already running")
 
         self.write_crl()
@@ -71,11 +71,13 @@ class OCSPResponder(object):
         print(args)
 
         self.responder_process = subprocess.Popen(args=args,
-                                                  stdout=subprocess.DEVNULL,
+                                                  stdout=subprocess.PIPE,
                                                   stderr=subprocess.STDOUT)
 
     def is_alive(self):
-        return True if self.responder_process.poll() is None else False
+        if self.responder_process is not None:
+            return True if self.responder_process.poll() is None else False
+        return False
 
     def stop_responder(self):
         if self.is_alive():
