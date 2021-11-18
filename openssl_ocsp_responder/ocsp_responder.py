@@ -157,4 +157,5 @@ class OCSPResponder(object):
         Removes a certificate from the CRL
         :param certificate_path: path to a PEM certificate file
         """
-        self.crl.pop(certificate_path, None)
+        serial_number = self._add_certificate(certificate_path)
+        self.crl.pop(serial_number, None)
