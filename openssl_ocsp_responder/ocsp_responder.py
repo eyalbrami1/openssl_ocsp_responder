@@ -19,7 +19,7 @@ class OCSPResponder(object):
     The responder will only be able to approve certificates issued by the CA
     """
     def __init__(self, crl_dir, ca_certificate_path, ocsp_certificate_path,
-                 ocsp_key_path, start_responder=False, port='9999', log_output_path=None):
+                 ocsp_key_path, start_responder=False, port=9999, log_output_path=None):
         """
         Initializes the responder
         :param str crl_dir: The path to the directory to write the CRL file in.
@@ -59,7 +59,7 @@ class OCSPResponder(object):
         self.write_crl()
         args = ['openssl', 'ocsp',
                 '-index', self.crl_file_path,
-                '-port', self.ocsp_port,
+                '-port', str(self.ocsp_port),
                 '-rsigner', self.ocsp_certificate_path,
                 '-rkey', self.ocsp_key_path,
                 '-CA', self.ca_certificate_path]
