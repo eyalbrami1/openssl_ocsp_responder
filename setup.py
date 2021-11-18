@@ -2,13 +2,13 @@ from distutils.core import setup
 setup(
   name = 'openssl_ocsp_responder',
   packages = ['openssl_ocsp_responder'],
-  version = '0.4',
+  version = '0.5',
   license='MIT',
   description = 'Simple wrapper for OpenSSL OCSP server',
   author = 'Eyal Brami',
   author_email = 'eyal.brami@redis.com',
   url = 'https://github.com/eyalbrami1/openssl_ocsp_responder',
-  download_url = 'https://github.com/eyalbrami1/openssl_ocsp_responder/archive/refs/tags/v0.4.tar.gz',
+  download_url = 'https://github.com/eyalbrami1/openssl_ocsp_responder/archive/refs/tags/v0.5.tar.gz',
   keywords = ['ocsp', 'ssl', 'openssl'],
   install_requires=[
           'pyopenssl',

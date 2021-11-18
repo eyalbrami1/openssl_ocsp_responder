@@ -45,10 +45,7 @@ class OCSPResponder(object):
 
     def __del__(self):
         self.stop_responder()
-        if os.path.exists(self.crl_file_path):
-            os.remove(self.crl_file_path)
-        if os.path.exists(self.crl_file_path + ATTRIBUTE_FILE_SUFFIX):
-            os.remove(self.crl_file_path + ATTRIBUTE_FILE_SUFFIX)
+        self.delete_crl_file()
 
     def start_responder(self):
         """
@@ -87,10 +84,17 @@ class OCSPResponder(object):
         self.stop_responder()
         self.start_responder()
 
+    def delete_crl_file(self):
+        if os.path.exists(self.crl_file_path):
+            os.remove(self.crl_file_path)
+        if os.path.exists(self.crl_file_path + ATTRIBUTE_FILE_SUFFIX):
+            os.remove(self.crl_file_path + ATTRIBUTE_FILE_SUFFIX)
+
     def write_crl(self):
         """
         Creates the CRL file for the OpenSSL OCSP Responder
         """
+        self.delete_crl_file()
         with open(self.crl_file_path, 'w') as crl_file:
             for cert in self.crl.values():
                 crl_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(cert['status'],
