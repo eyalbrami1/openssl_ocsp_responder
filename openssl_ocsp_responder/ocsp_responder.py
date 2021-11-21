@@ -122,7 +122,7 @@ class OCSPResponder(object):
         serial_number = certificate.get_serial_number()
         subject = certificate.get_subject()
         subject_str = "".join("/{}={}".format(name.decode(), value.decode()) for name, value in subject.get_components())
-        cert_entry = {'serial_number': format(serial_number, 'x'),
+        cert_entry = {'serial_number': "%X" % serial_number,
                       'expiration_time': certificate.get_notAfter().decode("utf-8")[2:],
                       'revocation_time': '',
                       'subject': subject_str}
