@@ -69,6 +69,7 @@ class OCSPResponder(object):
         self.responder_process = subprocess.Popen(args=args,
                                                   stdout=subprocess.PIPE,
                                                   stderr=subprocess.STDOUT)
+        assert(self.is_alive())
 
     def is_alive(self):
         if self.responder_process is not None:
