@@ -1,7 +1,12 @@
-import datetime
+from datetime import datetime, timedelta
 import os.path
 import subprocess
 import OpenSSL.crypto
+import requests
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+import base64
+from urlparse import urljoin
 
 CRL_FILE_NAME = "db.crl"
 ATTRIBUTE_FILE_SUFFIX = ".attr"
@@ -19,7 +24,7 @@ class OCSPResponder(object):
     The responder will only be able to approve certificates issued by the CA
     """
     def __init__(self, crl_dir, ca_certificate_path, ocsp_certificate_path,
-                 ocsp_key_path, start_responder=False, port=9999, log_output_path=None):
+                 ocsp_key_path, start_responder=False, port=9999, log_output_path=None, request_timeout=5):
         """
         Initializes the responder
         :param str crl_dir: The path to the directory to write the CRL file in.
@@ -30,6 +35,7 @@ class OCSPResponder(object):
         :param bool start_responder: Should the responder start upon initialization
         :param str port: Port the responder should listen to
         :param str log_output_path: absolute path to an output file for the responder
+        :param int request_timeout: timeout in seconds for when polling the responder itself for a status of a certificate
         """
         if any(arg is None for arg in [ca_certificate_path, ocsp_certificate_path, ocsp_key_path]):
             raise OCSPResponderException("All certificates must be supplied")
@@ -42,6 +48,7 @@ class OCSPResponder(object):
         self.crl_file_path = os.path.join(crl_dir, CRL_FILE_NAME)
         self.crl = {}
         self.log_path = log_output_path
+        self.request_timeout = request_timeout
 
     def __del__(self):
         self.stop_responder()
@@ -69,6 +76,11 @@ class OCSPResponder(object):
         self.responder_process = subprocess.Popen(args=args,
                                                   stdout=subprocess.PIPE,
                                                   stderr=subprocess.STDOUT)
+
+        if self.get_status(self.ocsp_certificate_path, self.ca_certificate_path, self.request_timeout) is None:
+            self.stop_responder()
+            self.delete_crl_file()
+            raise Exception("Failed to get a response from the responder")
         assert(self.is_alive())
 
     def is_alive(self):
@@ -149,14 +161,110 @@ class OCSPResponder(object):
         self.crl[serial_number]['status'] = 'R'
 
         if revocation_time is None:
-            revocation_time = datetime.datetime.utcnow()
+            revocation_time = datetime.utcnow()
         revocation_time_str = revocation_time.strftime("%y%m%d%H%M%S") + "Z"
         self.crl[serial_number]['revocation_time'] = revocation_time_str
 
     def delete_certificate(self, certificate_path):
         """
         Removes a certificate from the CRL
-        :param certificate_path: path to a PEM certificate file
+        :param str certificate_path: path to a PEM certificate file
         """
         serial_number = self._add_certificate(certificate_path)
         self.crl.pop(serial_number, None)
+
+    def get_status(self, certificate_path, issuer_certificate_path, timeout=None, ocsp_port=None):
+        """
+        Returns the status of a provided certificate by sending a request to the responder
+        :param str certificate_path: path to a PEM certificate file
+        :param str issuer_certificate_path: path to the issuer's certificate PEM file
+        :param int timeout: timeout in seconds for getting a response from the responder
+        :param int ocsp_port: OCSP responder port. used in self-validation of responder, to override reading OCSP URI from certificate
+        :return: the status of the certificate, or None if could not get it (eiter could not send request, or responder
+                 sent an exception status)
+        :rtype: an enum value of cryptography.x509.ocsp.OCSPCertStatus (or None)
+        """
+        request_timeout = self.request_timeout if timeout is None else timeout
+        current_time = datetime.now()
+        status = None
+
+        while datetime.now() < current_time + timedelta(seconds=request_timeout):
+            try:
+                ocsp_response = OCSPResponder.get_cert_ocsp_response(certificate_path, issuer_certificate_path, timeout=0.5, ocsp_port=self.ocsp_port)
+                status = x509.ocsp.load_der_ocsp_response(ocsp_response).certificate_status
+                break
+            except requests.exceptions.Timeout:  # Request timed out
+                pass
+            except requests.exceptions.ConnectionError:  # Responder could not be reached
+                pass
+            except ValueError:  # Response has an unsuccessful status
+                pass
+
+        return status
+
+    @staticmethod
+    def _get_cert_from_file(certificate_path):
+        """
+        Load a certificate from a given PEM file path
+        :param str certificate_path: path to certificate path
+        :return: a cryptography.x509.Certificate
+        """
+        with open(certificate_path, 'rt') as cert_file:
+            cert_str = cert_file.read()
+            cert = x509.load_pem_x509_certificate(cert_str)
+        return cert
+
+    @staticmethod
+    def _get_ocsp_server(cert):
+        """
+        Retrieves the OCSP URI from a certificate
+        :param x509.Certificate cert: The certificate to get the OCSP URI from
+        :return: the OCSP URI string
+        """
+        aia = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
+        ocsps = [ia for ia in aia if ia.access_method == x509.oid.AuthorityInformationAccessOID.OCSP]
+        if not ocsps:
+            raise DataPathTestError('no ocsp server entry in AIA')
+        return ocsps[0].access_location.value
+
+    @staticmethod
+    def _get_ocsp_request(ocsp_server, cert, issuer_cert):
+        """
+        Builds an OCSP requests
+        :param str ocsp_server: the OCSP responder URI
+        :param x509.Certificate cert: the certificate to validate with the responder
+        :param x509.Certificate issuer_cert: the certificate that issued the validated certificate
+        :return: content of a GET request to be sent to the OCSP responder
+        """
+        builder = x509.ocsp.OCSPRequestBuilder()
+        builder = builder.add_certificate(cert, issuer_cert, hashes.SHA256())
+        req = builder.build()
+        req_path = base64.b64encode(req.public_bytes(serialization.Encoding.DER))
+        return urljoin(ocsp_server + '/', req_path.decode('ascii'))
+
+    @staticmethod
+    def _get_ocsp_response_from_server(ocsp_server, cert, issuer_cert, timeout):
+        ocsp_resp = requests.get(OCSPResponder._get_ocsp_request(ocsp_server, cert, issuer_cert), timeout=timeout)
+        if ocsp_resp.ok:
+            return ocsp_resp.content
+        raise DataPathTestError(
+            'fetching ocsp cert response from responder failed with HTTP response status: {}'.format(
+                ocsp_resp.status_code))
+
+    @staticmethod
+    def get_cert_ocsp_response(cert_path, issuer_cert_path, timeout, ocsp_port=None):
+        """
+        Gets an OCSP response for a given certificate
+        Sends an OCSP request to a OCSP responder declared in the certificate and gets the response
+        :param str cert_path: path to the relevant certificate PEM file
+        :param str issuer_cert_path: path to the issuer's certificate PEM file
+        :param int timeout: timeout in seconds for getting a response from the responder
+        :param int ocsp_port: OCSP responder port. used in self-validation of responder, to override reading OCSP URI from certificate
+        :return: A DER encoded OCSP response
+        :rtype: bytes
+        """
+        cert = OCSPResponder._get_cert_from_file(cert_path)
+        issuer_cert = OCSPResponder._get_cert_from_file(issuer_cert_path)
+        ocsp_server = OCSPResponder._get_ocsp_server(cert) if ocsp_port is None else 'http://localhost:{}'.format(ocsp_port)
+        return OCSPResponder._get_ocsp_response_from_server(ocsp_server, cert, issuer_cert, timeout)
+
