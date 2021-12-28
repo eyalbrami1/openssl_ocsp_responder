@@ -1,5 +1,8 @@
 import base64
-from urlparse import urljoin
+try:
+    from urllib.parse import urljoin
+except ImportError:
+    from urlparse import urljoin
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography import x509
 import openssl_ocsp_responder
@@ -21,7 +24,7 @@ def _get_cert_from_file(certificate_path):
     :param str certificate_path: path to certificate path
     :return: a cryptography.x509.Certificate
     """
-    with open(certificate_path, 'rt') as cert_file:
+    with open(certificate_path, 'rb') as cert_file:
         cert_str = cert_file.read()
         cert = x509.load_pem_x509_certificate(cert_str)
     return cert
