@@ -7,9 +7,12 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 import base64
 from urlparse import urljoin
+import logging
 
 CRL_FILE_NAME = "db.crl"
 ATTRIBUTE_FILE_SUFFIX = ".attr"
+
+logger = logging.getLogger()
 
 
 class OCSPResponderException(Exception):
@@ -24,7 +27,7 @@ class OCSPResponder(object):
     The responder will only be able to approve certificates issued by the CA
     """
     def __init__(self, crl_dir, ca_certificate_path, ocsp_certificate_path,
-                 ocsp_key_path, start_responder=False, port=9999, log_output_path=None, request_timeout=5):
+                 ocsp_key_path, start_responder=False, port=9999, log_output_path=None, request_timeout=0.8, total_timeout=5):
         """
         Initializes the responder
         :param str crl_dir: The path to the directory to write the CRL file in.
@@ -35,7 +38,8 @@ class OCSPResponder(object):
         :param bool start_responder: Should the responder start upon initialization
         :param str port: Port the responder should listen to
         :param str log_output_path: absolute path to an output file for the responder
-        :param int request_timeout: timeout in seconds for when polling the responder itself for a status of a certificate
+        :param int request_timeout: timeout in seconds for sending a single OCSP request to the responder
+        :param int total_timeout: timeout in seconds for when polling the responder itself for a status of a certificate
         """
         if any(arg is None for arg in [ca_certificate_path, ocsp_certificate_path, ocsp_key_path]):
             raise OCSPResponderException("All certificates must be supplied")
@@ -49,6 +53,7 @@ class OCSPResponder(object):
         self.crl = {}
         self.log_path = log_output_path
         self.request_timeout = request_timeout
+        self.total_timeout = total_timeout
 
     def __del__(self):
         self.stop_responder()
@@ -80,7 +85,7 @@ class OCSPResponder(object):
         if self.get_status(self.ocsp_certificate_path, self.ca_certificate_path, self.request_timeout) is None:
             self.stop_responder()
             self.delete_crl_file()
-            raise Exception("Failed to get a response from the responder")
+            raise OCSPResponderException("Failed to get a response from the responder")
         assert(self.is_alive())
 
     def is_alive(self):
@@ -173,31 +178,36 @@ class OCSPResponder(object):
         serial_number = self._add_certificate(certificate_path)
         self.crl.pop(serial_number, None)
 
-    def get_status(self, certificate_path, issuer_certificate_path, timeout=None, ocsp_port=None):
+    def get_status(self, certificate_path, issuer_certificate_path, request_timeout=None, total_timeout=None):
         """
         Returns the status of a provided certificate by sending a request to the responder
         :param str certificate_path: path to a PEM certificate file
         :param str issuer_certificate_path: path to the issuer's certificate PEM file
-        :param int timeout: timeout in seconds for getting a response from the responder
-        :param int ocsp_port: OCSP responder port. used in self-validation of responder, to override reading OCSP URI from certificate
+        :param int request_timeout: timeout in seconds for sending a single OCSP request to the responder
+        :param int total_timeout: timeout in seconds for when polling the responder itself for a status of a certificate
         :return: the status of the certificate, or None if could not get it (eiter could not send request, or responder
                  sent an exception status)
         :rtype: an enum value of cryptography.x509.ocsp.OCSPCertStatus (or None)
         """
-        request_timeout = self.request_timeout if timeout is None else timeout
+        single_request_timeout = self.request_timeout if request_timeout is None else request_timeout
+        delta_seconds = self.total_timeout if total_timeout is None else total_timeout
         current_time = datetime.now()
+        delta = timedelta(seconds=delta_seconds)
         status = None
 
-        while datetime.now() < current_time + timedelta(seconds=request_timeout):
+        while datetime.now() < current_time + delta:
             try:
-                ocsp_response = OCSPResponder.get_cert_ocsp_response(certificate_path, issuer_certificate_path, timeout=0.5, ocsp_port=self.ocsp_port)
+                ocsp_response = OCSPResponder.get_cert_ocsp_response(certificate_path, issuer_certificate_path, timeout=single_request_timeout, ocsp_port=self.ocsp_port)
                 status = x509.ocsp.load_der_ocsp_response(ocsp_response).certificate_status
                 break
-            except requests.exceptions.Timeout:  # Request timed out
+            except requests.exceptions.Timeout as e:  # Request timed out
+                logger.info(e)
                 pass
-            except requests.exceptions.ConnectionError:  # Responder could not be reached
+            except requests.exceptions.ConnectionError as e:  # Responder could not be reached
+                logger.info(e)
                 pass
-            except ValueError:  # Response has an unsuccessful status
+            except ValueError as e:  # Response has an unsuccessful status
+                logger.info(e)
                 pass
 
         return status
@@ -211,8 +221,7 @@ class OCSPResponder(object):
         """
         with open(certificate_path, 'rt') as cert_file:
             cert_str = cert_file.read()
-            cert = x509.load_pem_x509_certificate(cert_str)
-        return cert
+        return x509.load_pem_x509_certificate(cert_str)
 
     @staticmethod
     def _get_ocsp_server(cert):
