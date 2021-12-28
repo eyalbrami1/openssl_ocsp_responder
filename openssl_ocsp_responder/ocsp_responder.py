@@ -4,6 +4,7 @@ import subprocess
 import OpenSSL.crypto
 import requests
 from cryptography import x509
+from cryptography.x509 import ocsp
 from cryptography.hazmat.primitives import hashes, serialization
 import base64
 try:
@@ -201,7 +202,7 @@ class OCSPResponder(object):
         while datetime.now() < current_time + delta:
             try:
                 ocsp_response = OCSPResponder.get_cert_ocsp_response(certificate_path, issuer_certificate_path, timeout=single_request_timeout, ocsp_port=self.ocsp_port)
-                status = x509.ocsp.load_der_ocsp_response(ocsp_response).certificate_status
+                status = ocsp.load_der_ocsp_response(ocsp_response).certificate_status
                 break
             except requests.exceptions.Timeout as e:  # Request timed out
                 logger.info(e)
@@ -248,7 +249,7 @@ class OCSPResponder(object):
         :param x509.Certificate issuer_cert: the certificate that issued the validated certificate
         :return: content of a GET request to be sent to the OCSP responder
         """
-        builder = x509.ocsp.OCSPRequestBuilder()
+        builder = ocsp.OCSPRequestBuilder()
         builder = builder.add_certificate(cert, issuer_cert, hashes.SHA256())
         req = builder.build()
         req_path = base64.b64encode(req.public_bytes(serialization.Encoding.DER))
