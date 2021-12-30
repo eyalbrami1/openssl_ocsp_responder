@@ -260,8 +260,8 @@ class OCSPResponder(object):
         ocsp_resp = requests.post(url=ocsp_server, data=data, headers=headers, timeout=timeout)
         if ocsp_resp.ok:
             return ocsp_resp.content
-        raise OCSPResponderException('fetching ocsp cert response from responder failed with HTTP response status: {}'.format(
-            ocsp_resp.status_code))
+        raise OCSPResponderException('fetching ocsp cert response from responder failed with HTTP error: {} {}'.format(
+            ocsp_resp.status_code, ocsp_resp.reason))
 
     @staticmethod
     def get_cert_ocsp_response(cert_path, issuer_cert_path, timeout, ocsp_port=None):
