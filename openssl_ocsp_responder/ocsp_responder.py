@@ -73,7 +73,8 @@ class OCSPResponder(object):
                 '-port', str(self.ocsp_port),
                 '-rsigner', self.ocsp_certificate_path,
                 '-rkey', self.ocsp_key_path,
-                '-CA', self.ca_certificate_path]
+                '-CA', self.ca_certificate_path,
+                '-ignore_err']
         if self.log_path is not None:
             args += ['-text', '-out', self.log_path]
 
