@@ -7,6 +7,10 @@ from cryptography import x509
 from cryptography.x509 import ocsp
 from cryptography.hazmat.primitives import hashes, serialization
 import logging
+try:
+    from urllib.parse import urlparse
+except ImportError:
+     from urlparse import urlparse
 
 CRL_FILE_NAME = "db.crl"
 ATTRIBUTE_FILE_SUFFIX = ".attr"
@@ -249,7 +253,11 @@ class OCSPResponder(object):
         builder = builder.add_certificate(cert, issuer_cert, hashes.SHA256())
         req = builder.build()
         data = req.public_bytes(serialization.Encoding.DER)
-        ocsp_resp = requests.post(url=ocsp_server, data=data, headers={'Content-Type': 'application/ocsp-request'}, timeout=timeout)
+        headers = {
+            'Host': urlparse(ocsp_server).netloc,
+            'Content-Type': 'application/ocsp-request'
+        }
+        ocsp_resp = requests.post(url=ocsp_server, data=data, headers=headers, timeout=timeout)
         if ocsp_resp.ok:
             return ocsp_resp.content
         raise OCSPResponderException('fetching ocsp cert response from responder failed with HTTP response status: {}'.format(

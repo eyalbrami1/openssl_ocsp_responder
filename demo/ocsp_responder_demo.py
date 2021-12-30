@@ -2,6 +2,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography import x509
 import openssl_ocsp_responder
 import requests
+from urlparse import urlparse
 
 OCSP_CERT_FILENAME = "./ocsp_cert.pem"
 OCSP_KEY_FILENAME = "./ocsp_key.pem"
@@ -43,7 +44,11 @@ def _get_ocsp_response_from_server(ocsp_server, cert, issuer_cert):
     builder = builder.add_certificate(cert, issuer_cert, hashes.SHA256())
     req = builder.build()
     data = req.public_bytes(serialization.Encoding.DER)
-    ocsp_resp = requests.post(url=ocsp_server, data=data, headers={'Content-Type': 'application/ocsp-request'})
+    headers = {
+        'Host': urlparse(ocsp_server).netloc,
+        'Content-Type': 'application/ocsp-request'
+    }
+    ocsp_resp = requests.post(url=ocsp_server, data=data, headers=headers)
     if ocsp_resp.ok:
         return ocsp_resp.content
     raise Exception('fetching ocsp cert response from responder failed with HTTP response status: {}'.format(ocsp_resp.status_code))
