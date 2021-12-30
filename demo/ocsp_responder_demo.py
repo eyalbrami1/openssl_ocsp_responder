@@ -1,8 +1,3 @@
-import base64
-try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography import x509
 import openssl_ocsp_responder
@@ -43,23 +38,12 @@ def _get_ocsp_server(cert):
     return ocsps[0].access_location.value
 
 
-def _get_ocsp_request(ocsp_server, cert, issuer_cert):
-    """
-    Builds an OCSP requests
-    :param str ocsp_server: the OCSP responder URI
-    :param x509.Certificate cert: the certificate to validate with the responder
-    :param x509.Certificate issuer_cert: the certificate that issued the validated certificate
-    :return: content of a GET request to be sent to the OCSP responder
-    """
+def _get_ocsp_response_from_server(ocsp_server, cert, issuer_cert):
     builder = x509.ocsp.OCSPRequestBuilder()
     builder = builder.add_certificate(cert, issuer_cert, hashes.SHA256())
     req = builder.build()
-    req_path = base64.b64encode(req.public_bytes(serialization.Encoding.DER))
-    return urljoin(ocsp_server + '/', req_path.decode('ascii'))
-
-
-def _get_ocsp_response_from_server(ocsp_server, cert, issuer_cert):
-    ocsp_resp = requests.get(_get_ocsp_request(ocsp_server, cert, issuer_cert))
+    data = req.public_bytes(serialization.Encoding.DER)
+    ocsp_resp = requests.post(url=ocsp_server, data=data, headers={'Content-Type': 'application/ocsp-request'})
     if ocsp_resp.ok:
         return ocsp_resp.content
     raise Exception('fetching ocsp cert response from responder failed with HTTP response status: {}'.format(ocsp_resp.status_code))

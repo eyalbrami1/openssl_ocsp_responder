@@ -6,11 +6,6 @@ import requests
 from cryptography import x509
 from cryptography.x509 import ocsp
 from cryptography.hazmat.primitives import hashes, serialization
-import base64
-try:
-    from urllib.parse import urljoin
-except ImportError:
-    from urlparse import urljoin
 import logging
 
 CRL_FILE_NAME = "db.crl"
@@ -237,32 +232,27 @@ class OCSPResponder(object):
         aia = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
         ocsps = [ia for ia in aia if ia.access_method == x509.oid.AuthorityInformationAccessOID.OCSP]
         if not ocsps:
-            raise DataPathTestError('no ocsp server entry in AIA')
+            raise OCSPResponderException('no ocsp server entry in AIA')
         return ocsps[0].access_location.value
 
     @staticmethod
-    def _get_ocsp_request(ocsp_server, cert, issuer_cert):
+    def _get_ocsp_response_from_server(ocsp_server, cert, issuer_cert, timeout):
         """
-        Builds an OCSP requests
+        Builds an OCSP request and sends it
         :param str ocsp_server: the OCSP responder URI
         :param x509.Certificate cert: the certificate to validate with the responder
         :param x509.Certificate issuer_cert: the certificate that issued the validated certificate
-        :return: content of a GET request to be sent to the OCSP responder
+        :return: DER encoded OCSP response from the responder
         """
-        builder = ocsp.OCSPRequestBuilder()
+        builder = x509.ocsp.OCSPRequestBuilder()
         builder = builder.add_certificate(cert, issuer_cert, hashes.SHA256())
         req = builder.build()
-        req_path = base64.b64encode(req.public_bytes(serialization.Encoding.DER))
-        return urljoin(ocsp_server + '/', req_path.decode('ascii'))
-
-    @staticmethod
-    def _get_ocsp_response_from_server(ocsp_server, cert, issuer_cert, timeout):
-        ocsp_resp = requests.get(OCSPResponder._get_ocsp_request(ocsp_server, cert, issuer_cert), timeout=timeout)
+        data = req.public_bytes(serialization.Encoding.DER)
+        ocsp_resp = requests.post(url=ocsp_server, data=data, headers={'Content-Type': 'application/ocsp-request'}, timeout=timeout)
         if ocsp_resp.ok:
             return ocsp_resp.content
-        raise DataPathTestError(
-            'fetching ocsp cert response from responder failed with HTTP response status: {}'.format(
-                ocsp_resp.status_code))
+        raise OCSPResponderException('fetching ocsp cert response from responder failed with HTTP response status: {}'.format(
+            ocsp_resp.status_code))
 
     @staticmethod
     def get_cert_ocsp_response(cert_path, issuer_cert_path, timeout, ocsp_port=None):
